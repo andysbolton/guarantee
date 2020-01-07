@@ -4,6 +4,12 @@ enum Status {
   Fulfilled = "fulfilled"
 }
 
+function assert(condition: boolean, message: string) {
+  if (!condition) {
+    throw message || "Assertion failed";
+  }
+}
+
 interface IThenable<T> {
   then: (
     onFulfilled?: (value: T) => T,
@@ -41,16 +47,21 @@ export default class Guarantee<T> implements IThenable<T> {
       rejected: (reason: string) => any
     ) => void
   ) {
-    func = func && func.bind(this);
+    // func = func && func.bind(this);
     this.thenable = isFunction(func)
       ? () => func(this.resolve.bind(this), this.reject.bind(this))
       : () => {};
-    this.thenable = this.thenable.bind(this);
   }
 
   public resolve(value: T | any) {
     if (!this.pending) {
       return this.value;
+    }
+
+    const res = this.promiseResolution(value);
+
+    if (!res.finish) {
+      return;
     }
 
     // const valueIsPromise = isPromise(value);
@@ -62,7 +73,7 @@ export default class Guarantee<T> implements IThenable<T> {
     // }
 
     this.status = Status.Fulfilled;
-    this.value = value;
+    this.value = res.value;
 
     const resolve = () => {
       for (const guarantee of this.gaurantees) {
@@ -71,6 +82,7 @@ export default class Guarantee<T> implements IThenable<T> {
         }
       }
     };
+
     setTimeout(resolve, 0);
 
     return this;
@@ -78,7 +90,13 @@ export default class Guarantee<T> implements IThenable<T> {
 
   public reject(reason: any) {
     if (!this.pending) {
-      return this.reason;
+      return;
+    }
+
+    const res = this.promiseResolution(reason);
+
+    if (!res.finish) {
+      return;
     }
 
     // const reasonIsPromise = isPromise(reason);
@@ -90,7 +108,7 @@ export default class Guarantee<T> implements IThenable<T> {
     // }
 
     this.status = Status.Rejected;
-    this.reason = reason;
+    this.reason = res.value;
 
     const reject = () => {
       for (const guarantee of this.gaurantees) {
@@ -109,19 +127,14 @@ export default class Guarantee<T> implements IThenable<T> {
     onFulfilled?: (value: T) => T,
     onRejected?: (reason: any) => any
   ): Guarantee<T> {
-    const parent = this;
-
     const guarantee = new Guarantee<T>((resolve, reject) => {
-      let value = parent.value;
-      let reason = parent.reason;
+      let value = this.value;
+      let reason = this.reason;
 
       let resolveWrapper = () => {
         try {
           value = onFulfilled && onFulfilled(value);
-          const res = this.promiseResolution(value);
-          if (res.finish) {
-            resolve(res.value);
-          }
+          resolve(value);
         } catch (error) {
           reject(error);
         }
@@ -130,29 +143,26 @@ export default class Guarantee<T> implements IThenable<T> {
       let rejectWrapper = () => {
         try {
           reason = onRejected && onRejected(reason);
-          const res = this.promiseResolution(reason);
-          if (res.finish) {
-            resolve(res.value);
-          }
+          reject(reason);
         } catch (error) {
           resolve(error);
         }
       };
 
-      if (parent.status === Status.Fulfilled) {
+      if (this.status === Status.Fulfilled) {
         if (isFunction(onFulfilled)) {
           resolveWrapper();
         } else if (isFunction(onRejected)) {
-          reason = parent.value;
+          reason = this.value;
           rejectWrapper();
         } else {
           resolve(value);
         }
-      } else if (parent.status === Status.Rejected) {
+      } else if (this.status === Status.Rejected) {
         if (isFunction(onRejected)) {
           rejectWrapper();
         } else if (isFunction(onFulfilled)) {
-          value = parent.reason;
+          value = this.reason;
           resolveWrapper();
         } else {
           reject(reason);
@@ -165,7 +175,7 @@ export default class Guarantee<T> implements IThenable<T> {
     return guarantee;
   }
 
-  private promiseResolution<T>(x: any) {
+  private promiseResolution<T>(this: Guarantee<T>, x: any) {
     if (this === x) {
       throw new TypeError("Promise and x cannot refer to the same value.");
     }
