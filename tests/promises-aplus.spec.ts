@@ -9,7 +9,7 @@ const adapter = {
   //   // return Guarantee.rejected(reason);
   // },
   deferred() {
-    const promise = new Guarantee(() => {});
+    const promise = new Guarantee((resolve, reject) => {});
     return {
       promise,
       resolve(value: any) {

@@ -4,12 +4,6 @@ enum Status {
   Fulfilled = "fulfilled"
 }
 
-function assert(condition: boolean, message: string) {
-  if (!condition) {
-    throw message || "Assertion failed";
-  }
-}
-
 interface IThenable<T> {
   then: (
     onFulfilled?: (value: T) => T,
@@ -17,63 +11,57 @@ interface IThenable<T> {
   ) => IThenable<T>;
 }
 
-let globalId = 0;
+type Thenable = () => void;
+type ThenableContinuation<T> = { value?: T | any; finish: boolean };
 
-const isFunction = (func: any) =>
-  func && func !== undefined && typeof func === "function";
-
-const isFunctionOrObject = (val: any) =>
-  isFunction(val) || (val && typeof val === "object");
-
-const isPromise = (obj: any) => obj instanceof Guarantee;
+const isFunction = (func: any) => typeof func === "function";
+const isObject = (val: any) => val && typeof val === "object";
+const isPromise = (val: any) => val instanceof Guarantee;
 
 export default class Guarantee<T> implements IThenable<T> {
   public status: Status = Status.Pending;
   public reason: any;
   public value: T | any;
-  public id = ++globalId;
 
   public get pending() {
     return this.status === Status.Pending;
   }
 
-  protected thenable = (value?: T | any) => {};
-
+  private thenable: Thenable;
   private gaurantees: Guarantee<T>[] = [];
 
   constructor(
     func: (
-      resolved: (value: any) => any,
-      rejected: (reason: string) => any
+      resolved: (value: any, unpack?: boolean) => any,
+      rejected: (reason: string, unpack?: boolean) => any
     ) => void
   ) {
-    // func = func && func.bind(this);
-    this.thenable = isFunction(func)
-      ? () => func(this.resolve.bind(this), this.reject.bind(this))
-      : () => {};
+    if (!isFunction(func)) {
+      throw new TypeError("Constructor value should be a function.");
+    }
+    this.thenable = () =>
+      func(this.resolveInternal.bind(this), this.rejectInternal.bind(this));
   }
 
-  public resolve(value: T | any) {
+  public resolve = (value: T | any) => {
+    this.resolveInternal(value, false);
+  };
+
+  private resolveInternal(value: any, unpack: boolean = false) {
     if (!this.pending) {
       return this.value;
     }
 
-    const res = this.promiseResolution(value);
-
-    if (!res.finish) {
-      return;
+    let res;
+    if (!unpack) {
+      res = this.promiseResolution(value);
+      if (!res.finish) {
+        return;
+      }
     }
 
-    // const valueIsPromise = isPromise(value);
-
-    // // 2.3.2.1. If x is pending, promise must remain pending until x is fulfilled or rejected.
-    // if (valueIsPromise && value.status === Status.Pending) {
-    //   value.then(this.resolve.bind(this), this.reject.bind(this));
-    //   return undefined;
-    // }
-
     this.status = Status.Fulfilled;
-    this.value = res.value;
+    this.value = res ? res.value : value;
 
     const resolve = () => {
       for (const guarantee of this.gaurantees) {
@@ -88,27 +76,25 @@ export default class Guarantee<T> implements IThenable<T> {
     return this;
   }
 
-  public reject(reason: any) {
+  public reject = (reason: any) => {
+    this.rejectInternal(reason, false);
+  };
+
+  private rejectInternal(reason: any, unpack: boolean = false) {
     if (!this.pending) {
       return;
     }
 
-    const res = this.promiseResolution(reason);
-
-    if (!res.finish) {
-      return;
+    let res;
+    if (!unpack) {
+      res = this.promiseResolution(reason);
+      if (!res.finish) {
+        return;
+      }
     }
 
-    // const reasonIsPromise = isPromise(reason);
-
-    // // 2.3.2.1. If x is pending, promise must remain pending until x is fulfilled or rejected.
-    // if (reasonIsPromise && reason.status === Status.Pending) {
-    //   reason.then(this.resolve.bind(this), this.reject.bind(this));
-    //   return undefined;
-    // }
-
     this.status = Status.Rejected;
-    this.reason = res.value;
+    this.reason = res ? res.value : reason;
 
     const reject = () => {
       for (const guarantee of this.gaurantees) {
@@ -128,44 +114,37 @@ export default class Guarantee<T> implements IThenable<T> {
     onRejected?: (reason: any) => any
   ): Guarantee<T> {
     const guarantee = new Guarantee<T>((resolve, reject) => {
-      let value = this.value;
-      let reason = this.reason;
-
-      let resolveWrapper = () => {
+      let resolveWrapper = (value: any) => {
         try {
-          value = onFulfilled && onFulfilled(value);
-          resolve(value);
-        } catch (error) {
-          reject(error);
+          resolve(onFulfilled && onFulfilled(value));
+        } catch (e) {
+          reject(e, true);
         }
       };
 
-      let rejectWrapper = () => {
+      let rejectWrapper = (reason: any) => {
         try {
-          reason = onRejected && onRejected(reason);
-          reject(reason);
-        } catch (error) {
-          resolve(error);
+          reject(onRejected && onRejected(reason));
+        } catch (e) {
+          resolve(e, true);
         }
       };
 
       if (this.status === Status.Fulfilled) {
         if (isFunction(onFulfilled)) {
-          resolveWrapper();
+          resolveWrapper(this.value);
         } else if (isFunction(onRejected)) {
-          reason = this.value;
-          rejectWrapper();
+          rejectWrapper(this.value);
         } else {
-          resolve(value);
+          resolve(this.value);
         }
       } else if (this.status === Status.Rejected) {
         if (isFunction(onRejected)) {
-          rejectWrapper();
+          rejectWrapper(this.reason);
         } else if (isFunction(onFulfilled)) {
-          value = this.reason;
-          resolveWrapper();
+          resolveWrapper(this.reason);
         } else {
-          reject(reason);
+          reject(this.reason);
         }
       }
     });
@@ -175,7 +154,10 @@ export default class Guarantee<T> implements IThenable<T> {
     return guarantee;
   }
 
-  private promiseResolution<T>(this: Guarantee<T>, x: any) {
+  private promiseResolution<T>(
+    this: Guarantee<T>,
+    x: any
+  ): ThenableContinuation<T> {
     if (this === x) {
       throw new TypeError("Promise and x cannot refer to the same value.");
     }
@@ -184,7 +166,7 @@ export default class Guarantee<T> implements IThenable<T> {
       // 2.3.2.1. If x is pending, promise must remain pending until x is fulfilled or rejected.
       if (x.status === Status.Pending) {
         x.then(this.resolve.bind(this), this.reject.bind(this));
-        return { value: x, finish: false };
+        return { finish: false };
       }
 
       // 2.3.2. If is a promise, adopt its state.
@@ -197,19 +179,46 @@ export default class Guarantee<T> implements IThenable<T> {
       if (x.status === Status.Fulfilled) {
         x = x.value;
       }
-    } else if (isFunctionOrObject(x)) {
+    } else if (isFunction(x) || isObject(x)) {
       // 2.3.3. Otherwise, if x is an object or function,
-      // 2.3.3.1. Let then be x.then.
       let then;
       try {
+        // 2.3.3.1. Let then be x.then.
         then = x.then;
-      } catch (error) {
-        throw error;
+      } catch (e) {
+        this.rejectInternal(e, true);
+        return { finish: false };
       }
-      // TODO: 2.3.3.2. If retrieving the property x.then results in a thrown exception e, reject promise with e as the reason.
-      // 2.3.3.3. If then is a function, call it with x as this, first argument resolvePromise, and second argument rejectPromise, where:
+
       if (isFunction(then)) {
-        x = then.call(x, this.promiseResolution);
+        let called = false;
+        const resolvePromise = (val: any) => {
+          if (!called) {
+            called = true;
+            let res = this.promiseResolution(val);
+            if (res.finish) {
+              this.resolve(res.value);
+            }
+          }
+        };
+
+        const rejectPromise = (reason: any) => {
+          if (!called) {
+            called = true;
+            this.rejectInternal(reason, true);
+          }
+        };
+
+        try {
+          // 2.3.3.3. If then is a function, call it with x as this, first argument resolvePromise, and second argument rejectPromise, where:
+          then.call(x, resolvePromise, rejectPromise);
+        } catch (e) {
+          if (!called) {
+            this.rejectInternal(e, true);
+          }
+        }
+
+        return { finish: false };
       }
     }
 

@@ -6,30 +6,26 @@ var Status;
     Status["Rejected"] = "rejected";
     Status["Fulfilled"] = "fulfilled";
 })(Status || (Status = {}));
-function assert(condition, message) {
-    if (!condition) {
-        throw message || "Assertion failed";
-    }
-}
-var globalId = 0;
-var isFunction = function (func) {
-    return func && func !== undefined && typeof func === "function";
-};
-var isFunctionOrObject = function (val) {
-    return isFunction(val) || (val && typeof val === "object");
-};
-var isPromise = function (obj) { return obj instanceof Guarantee; };
+var isFunction = function (func) { return typeof func === "function"; };
+var isObject = function (val) { return val && typeof val === "object"; };
+var isPromise = function (val) { return val instanceof Guarantee; };
 var Guarantee = /** @class */ (function () {
     function Guarantee(func) {
         var _this = this;
         this.status = Status.Pending;
-        this.id = ++globalId;
-        this.thenable = function (value) { };
         this.gaurantees = [];
-        // func = func && func.bind(this);
-        this.thenable = isFunction(func)
-            ? function () { return func(_this.resolve.bind(_this), _this.reject.bind(_this)); }
-            : function () { };
+        this.resolve = function (value) {
+            _this.resolveInternal(value, false);
+        };
+        this.reject = function (reason) {
+            _this.rejectInternal(reason, false);
+        };
+        if (!isFunction(func)) {
+            throw new TypeError("Constructor value should be a function.");
+        }
+        this.thenable = function () {
+            return func(_this.resolveInternal.bind(_this), _this.rejectInternal.bind(_this));
+        };
     }
     Object.defineProperty(Guarantee.prototype, "pending", {
         get: function () {
@@ -38,23 +34,21 @@ var Guarantee = /** @class */ (function () {
         enumerable: true,
         configurable: true
     });
-    Guarantee.prototype.resolve = function (value) {
+    Guarantee.prototype.resolveInternal = function (value, unpack) {
         var _this = this;
+        if (unpack === void 0) { unpack = false; }
         if (!this.pending) {
             return this.value;
         }
-        var res = this.promiseResolution(value);
-        if (!res.finish) {
-            return;
+        var res;
+        if (!unpack) {
+            res = this.promiseResolution(value);
+            if (!res.finish) {
+                return;
+            }
         }
-        // const valueIsPromise = isPromise(value);
-        // // 2.3.2.1. If x is pending, promise must remain pending until x is fulfilled or rejected.
-        // if (valueIsPromise && value.status === Status.Pending) {
-        //   value.then(this.resolve.bind(this), this.reject.bind(this));
-        //   return undefined;
-        // }
         this.status = Status.Fulfilled;
-        this.value = res.value;
+        this.value = res ? res.value : value;
         var resolve = function () {
             for (var _i = 0, _a = _this.gaurantees; _i < _a.length; _i++) {
                 var guarantee = _a[_i];
@@ -66,23 +60,21 @@ var Guarantee = /** @class */ (function () {
         setTimeout(resolve, 0);
         return this;
     };
-    Guarantee.prototype.reject = function (reason) {
+    Guarantee.prototype.rejectInternal = function (reason, unpack) {
         var _this = this;
+        if (unpack === void 0) { unpack = false; }
         if (!this.pending) {
             return;
         }
-        var res = this.promiseResolution(reason);
-        if (!res.finish) {
-            return;
+        var res;
+        if (!unpack) {
+            res = this.promiseResolution(reason);
+            if (!res.finish) {
+                return;
+            }
         }
-        // const reasonIsPromise = isPromise(reason);
-        // // 2.3.2.1. If x is pending, promise must remain pending until x is fulfilled or rejected.
-        // if (reasonIsPromise && reason.status === Status.Pending) {
-        //   reason.then(this.resolve.bind(this), this.reject.bind(this));
-        //   return undefined;
-        // }
         this.status = Status.Rejected;
-        this.reason = res.value;
+        this.reason = res ? res.value : reason;
         var reject = function () {
             for (var _i = 0, _a = _this.gaurantees; _i < _a.length; _i++) {
                 var guarantee = _a[_i];
@@ -97,48 +89,42 @@ var Guarantee = /** @class */ (function () {
     Guarantee.prototype.then = function (onFulfilled, onRejected) {
         var _this = this;
         var guarantee = new Guarantee(function (resolve, reject) {
-            var value = _this.value;
-            var reason = _this.reason;
-            var resolveWrapper = function () {
+            var resolveWrapper = function (value) {
                 try {
-                    value = onFulfilled && onFulfilled(value);
-                    resolve(value);
+                    resolve(onFulfilled && onFulfilled(value));
                 }
-                catch (error) {
-                    reject(error);
+                catch (e) {
+                    reject(e, true);
                 }
             };
-            var rejectWrapper = function () {
+            var rejectWrapper = function (reason) {
                 try {
-                    reason = onRejected && onRejected(reason);
-                    reject(reason);
+                    reject(onRejected && onRejected(reason));
                 }
-                catch (error) {
-                    resolve(error);
+                catch (e) {
+                    resolve(e, true);
                 }
             };
             if (_this.status === Status.Fulfilled) {
                 if (isFunction(onFulfilled)) {
-                    resolveWrapper();
+                    resolveWrapper(_this.value);
                 }
                 else if (isFunction(onRejected)) {
-                    reason = _this.value;
-                    rejectWrapper();
+                    rejectWrapper(_this.value);
                 }
                 else {
-                    resolve(value);
+                    resolve(_this.value);
                 }
             }
             else if (_this.status === Status.Rejected) {
                 if (isFunction(onRejected)) {
-                    rejectWrapper();
+                    rejectWrapper(_this.reason);
                 }
                 else if (isFunction(onFulfilled)) {
-                    value = _this.reason;
-                    resolveWrapper();
+                    resolveWrapper(_this.reason);
                 }
                 else {
-                    reject(reason);
+                    reject(_this.reason);
                 }
             }
         });
@@ -146,6 +132,7 @@ var Guarantee = /** @class */ (function () {
         return guarantee;
     };
     Guarantee.prototype.promiseResolution = function (x) {
+        var _this = this;
         if (this === x) {
             throw new TypeError("Promise and x cannot refer to the same value.");
         }
@@ -153,7 +140,7 @@ var Guarantee = /** @class */ (function () {
             // 2.3.2.1. If x is pending, promise must remain pending until x is fulfilled or rejected.
             if (x.status === Status.Pending) {
                 x.then(this.resolve.bind(this), this.reject.bind(this));
-                return { value: x, finish: false };
+                return { finish: false };
             }
             // 2.3.2. If is a promise, adopt its state.
             // 2.3.2.3. If/when x is rejected, reject promise with the same reason.
@@ -165,20 +152,44 @@ var Guarantee = /** @class */ (function () {
                 x = x.value;
             }
         }
-        else if (isFunctionOrObject(x)) {
+        else if (isFunction(x) || isObject(x)) {
             // 2.3.3. Otherwise, if x is an object or function,
-            // 2.3.3.1. Let then be x.then.
             var then = void 0;
             try {
+                // 2.3.3.1. Let then be x.then.
                 then = x.then;
             }
-            catch (error) {
-                throw error;
+            catch (e) {
+                this.rejectInternal(e, true);
+                return { finish: false };
             }
-            // TODO: 2.3.3.2. If retrieving the property x.then results in a thrown exception e, reject promise with e as the reason.
-            // 2.3.3.3. If then is a function, call it with x as this, first argument resolvePromise, and second argument rejectPromise, where:
             if (isFunction(then)) {
-                x = then.call(x, this.promiseResolution);
+                var called_1 = false;
+                var resolvePromise = function (val) {
+                    if (!called_1) {
+                        called_1 = true;
+                        var res = _this.promiseResolution(val);
+                        if (res.finish) {
+                            _this.resolve(res.value);
+                        }
+                    }
+                };
+                var rejectPromise = function (reason) {
+                    if (!called_1) {
+                        called_1 = true;
+                        _this.rejectInternal(reason, true);
+                    }
+                };
+                try {
+                    // 2.3.3.3. If then is a function, call it with x as this, first argument resolvePromise, and second argument rejectPromise, where:
+                    then.call(x, resolvePromise, rejectPromise);
+                }
+                catch (e) {
+                    if (!called_1) {
+                        this.rejectInternal(e, true);
+                    }
+                }
+                return { finish: false };
             }
         }
         return { value: x, finish: true };
@@ -187,5 +198,4 @@ var Guarantee = /** @class */ (function () {
 }());
 exports.Guarantee = Guarantee;
 exports.default = Guarantee;
-// Tests failing where a promise is thrown and should be returned, but the promiseResolution unpacks the value
-//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiaW5kZXguanMiLCJzb3VyY2VSb290IjoiIiwic291cmNlcyI6WyIuLi8uLi9zcmMvaW5kZXgudHMiXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6Ijs7QUFBQSxJQUFLLE1BSUo7QUFKRCxXQUFLLE1BQU07SUFDVCw2QkFBbUIsQ0FBQTtJQUNuQiwrQkFBcUIsQ0FBQTtJQUNyQixpQ0FBdUIsQ0FBQTtBQUN6QixDQUFDLEVBSkksTUFBTSxLQUFOLE1BQU0sUUFJVjtBQUVELFNBQVMsTUFBTSxDQUFDLFNBQWtCLEVBQUUsT0FBZTtJQUNqRCxJQUFJLENBQUMsU0FBUyxFQUFFO1FBQ2QsTUFBTSxPQUFPLElBQUksa0JBQWtCLENBQUM7S0FDckM7QUFDSCxDQUFDO0FBU0QsSUFBSSxRQUFRLEdBQUcsQ0FBQyxDQUFDO0FBRWpCLElBQU0sVUFBVSxHQUFHLFVBQUMsSUFBUztJQUMzQixPQUFBLElBQUksSUFBSSxJQUFJLEtBQUssU0FBUyxJQUFJLE9BQU8sSUFBSSxLQUFLLFVBQVU7QUFBeEQsQ0FBd0QsQ0FBQztBQUUzRCxJQUFNLGtCQUFrQixHQUFHLFVBQUMsR0FBUTtJQUNsQyxPQUFBLFVBQVUsQ0FBQyxHQUFHLENBQUMsSUFBSSxDQUFDLEdBQUcsSUFBSSxPQUFPLEdBQUcsS0FBSyxRQUFRLENBQUM7QUFBbkQsQ0FBbUQsQ0FBQztBQUV0RCxJQUFNLFNBQVMsR0FBRyxVQUFDLEdBQVEsSUFBSyxPQUFBLEdBQUcsWUFBWSxTQUFTLEVBQXhCLENBQXdCLENBQUM7QUFFekQ7SUFjRSxtQkFDRSxJQUdTO1FBSlgsaUJBVUM7UUF2Qk0sV0FBTSxHQUFXLE1BQU0sQ0FBQyxPQUFPLENBQUM7UUFHaEMsT0FBRSxHQUFHLEVBQUUsUUFBUSxDQUFDO1FBTWIsYUFBUSxHQUFHLFVBQUMsS0FBZSxJQUFNLENBQUMsQ0FBQztRQUVyQyxlQUFVLEdBQW1CLEVBQUUsQ0FBQztRQVF0QyxrQ0FBa0M7UUFDbEMsSUFBSSxDQUFDLFFBQVEsR0FBRyxVQUFVLENBQUMsSUFBSSxDQUFDO1lB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
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiaW5kZXguanMiLCJzb3VyY2VSb290IjoiIiwic291cmNlcyI6WyIuLi8uLi9zcmMvaW5kZXgudHMiXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6Ijs7QUFBQSxJQUFLLE1BSUo7QUFKRCxXQUFLLE1BQU07SUFDVCw2QkFBbUIsQ0FBQTtJQUNuQiwrQkFBcUIsQ0FBQTtJQUNyQixpQ0FBdUIsQ0FBQTtBQUN6QixDQUFDLEVBSkksTUFBTSxLQUFOLE1BQU0sUUFJVjtBQVlELElBQU0sVUFBVSxHQUFHLFVBQUMsSUFBUyxJQUFLLE9BQUEsT0FBTyxJQUFJLEtBQUssVUFBVSxFQUExQixDQUEwQixDQUFDO0FBQzdELElBQU0sUUFBUSxHQUFHLFVBQUMsR0FBUSxJQUFLLE9BQUEsR0FBRyxJQUFJLE9BQU8sR0FBRyxLQUFLLFFBQVEsRUFBOUIsQ0FBOEIsQ0FBQztBQUM5RCxJQUFNLFNBQVMsR0FBRyxVQUFDLEdBQVEsSUFBSyxPQUFBLEdBQUcsWUFBWSxTQUFTLEVBQXhCLENBQXdCLENBQUM7QUFFekQ7SUFZRSxtQkFDRSxJQUdTO1FBSlgsaUJBV0M7UUF0Qk0sV0FBTSxHQUFXLE1BQU0sQ0FBQyxPQUFPLENBQUM7UUFTL0IsZUFBVSxHQUFtQixFQUFFLENBQUM7UUFlakMsWUFBTyxHQUFHLFVBQUMsS0FBYztZQUM5QixLQUFJLENBQUMsZUFBZSxDQUFDLEtBQUssRUFBRSxLQUFLLENBQUMsQ0FBQztRQUNyQyxDQUFDLENBQUM7UUErQkssV0FBTSxHQUFHLFVBQUMsTUFBVztZQUMxQixLQUFJLENBQUMsY0FBYyxDQUFDLE1BQU0sRUFBRSxLQUFLLENBQUMsQ0FBQztRQUNyQyxDQUFDLENBQUM7UUExQ0EsSUFBSSxDQUFDLFVBQVUsQ0FBQyxJQUFJLENBQUMsRUFBRTtZQUNyQixNQUFNLElBQUksU0FBUyxDQUFDLHlDQUF5QyxDQUFDLENBQUM7U0FDaEU7UUFDRCxJQUFJLENBQUMsUUFBUSxHQUFHO1lBQ2QsT0FBQSxJQUFJLENBQUMsS0FBSSxDQUFDLGVBQWUsQ0FBQyxJ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
