@@ -4,8 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "tsc -w --pretty"
+    "start": "tsc -w --pretty",
+    "test": "tsc --pretty && node dist/tests/promises-aplus.spec.js"
   },
   "devDependencies": {
     "promises-aplus-tests": "*",

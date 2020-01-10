@@ -3,13 +3,13 @@ import Guarantee from "../src/index";
 
 const adapter = {
   // resolved(value: any) {
-  //   // return Guarantee.resolved(value);
+  //   return Guarantee.resolved(value);
   // },
   // rejected(reason: string) {
-  //   // return Guarantee.rejected(reason);
+  //   return Guarantee.rejected(reason);
   // },
   deferred() {
-    const promise = new Guarantee((resolve, reject) => {});
+    const promise = new Guarantee();
     return {
       promise,
       resolve(value: any) {

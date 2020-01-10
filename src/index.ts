@@ -14,9 +14,10 @@ interface IThenable<T> {
 type Thenable = () => void;
 type ThenableContinuation<T> = { value?: T | any; finish: boolean };
 
-const isFunction = (func: any) => typeof func === "function";
-const isObject = (val: any) => val && typeof val === "object";
-const isPromise = (val: any) => val instanceof Guarantee;
+const isTruthy = (val: any) => !!val;
+const isFunction = (func: any) => isTruthy(func) && typeof func === "function";
+const isObject = (val: any) => isTruthy(val) && typeof val === "object";
+const isPromise = (val: any) => isTruthy(val) && val instanceof Guarantee;
 
 export default class Guarantee<T> implements IThenable<T> {
   public status: Status = Status.Pending;
@@ -32,24 +33,31 @@ export default class Guarantee<T> implements IThenable<T> {
   private unpack: boolean = true;
 
   constructor(
-    func: (
-      resolved: (value: any, unpack?: boolean) => any,
-      rejected: (reason: string, unpack?: boolean) => any
+    func?: (
+      resolved: (value: any) => any,
+      rejected: (reason: string) => any
     ) => void
   ) {
-    if (!isFunction(func)) {
-      throw new TypeError("Constructor value should be a function.");
-    }
-    this.thenable = () => {
-      try {
-        func(this.resolve.bind(this), this.reject.bind(this));
-      } catch (error) {
-        this.rejectWithoutUnpacking(error);
-      }
-    };
+    this.thenable = isFunction(func)
+      ? () => {
+          try {
+            func(this.resolve.bind(this), this.reject.bind(this));
+          } catch (error) {
+            this.rejectWithoutUnpacking(error);
+          }
+        }
+      : () => {};
   }
 
   public resolve(value: any) {
+    return this.internalHandler(value, Status.Fulfilled);
+  }
+
+  public reject(reason: any) {
+    return this.internalHandler(reason, Status.Rejected);
+  }
+
+  private internalHandler(value: any, status: Status) {
     if (!this.pending) {
       return this.value;
     }
@@ -62,10 +70,14 @@ export default class Guarantee<T> implements IThenable<T> {
       }
     }
 
-    this.status = Status.Fulfilled;
-    this.value = res ? res.value : value;
+    this.status = status;
+    if (status === Status.Fulfilled) {
+      this.value = res ? res.value : value;
+    } else {
+      this.reason = res ? res.value : value;
+    }
 
-    const resolve = () => {
+    const handler = () => {
       for (const guarantee of this.gaurantees) {
         if (guarantee.pending) {
           guarantee.thenable();
@@ -73,36 +85,7 @@ export default class Guarantee<T> implements IThenable<T> {
       }
     };
 
-    setTimeout(resolve, 0);
-
-    return this;
-  }
-
-  public reject(reason: any) {
-    if (!this.pending) {
-      return;
-    }
-
-    let res;
-    if (this.unpack) {
-      res = this.promiseResolution(reason);
-      if (!res.finish) {
-        return;
-      }
-    }
-
-    this.status = Status.Rejected;
-    this.reason = res ? res.value : reason;
-
-    const reject = () => {
-      for (const guarantee of this.gaurantees) {
-        if (guarantee.pending) {
-          guarantee.thenable();
-        }
-      }
-    };
-
-    setTimeout(reject, 0);
+    setTimeout(handler, 0);
 
     return this;
   }
@@ -118,17 +101,17 @@ export default class Guarantee<T> implements IThenable<T> {
   ): Guarantee<T> {
     const guarantee = new Guarantee<T>((resolve, reject) => {
       if (this.status === Status.Fulfilled) {
-        if (onFulfilled && isFunction(onFulfilled)) {
+        if (isFunction(onFulfilled)) {
           resolve(onFulfilled(this.value));
-        } else if (onRejected && isFunction(onRejected)) {
+        } else if (isFunction(onRejected)) {
           reject(onRejected(this.value));
         } else {
           resolve(this.value);
         }
       } else if (this.status === Status.Rejected) {
-        if (onRejected && isFunction(onRejected)) {
+        if (isFunction(onRejected)) {
           reject(onRejected(this.reason));
-        } else if (onFulfilled && isFunction(onFulfilled)) {
+        } else if (isFunction(onFulfilled)) {
           resolve(onFulfilled(this.reason));
         } else {
           reject(this.reason);
