@@ -1,5 +1,5 @@
 const promisesAplusTests = require("promises-aplus-tests");
-import { Guarantee } from "../src/index";
+import Guarantee from "../src/index";
 
 const adapter = {
   // resolved(value: any) {

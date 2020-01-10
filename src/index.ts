@@ -114,7 +114,7 @@ export default class Guarantee<T> implements IThenable<T> {
     onRejected?: (reason: any) => any
   ): Guarantee<T> {
     const guarantee = new Guarantee<T>((resolve, reject) => {
-      let resolveWrapper = (value: any) => {
+      const resolveWrapper = (value: any) => {
         try {
           resolve(onFulfilled && onFulfilled(value));
         } catch (e) {
@@ -122,7 +122,7 @@ export default class Guarantee<T> implements IThenable<T> {
         }
       };
 
-      let rejectWrapper = (reason: any) => {
+      const rejectWrapper = (reason: any) => {
         try {
           reject(onRejected && onRejected(reason));
         } catch (e) {
@@ -225,5 +225,3 @@ export default class Guarantee<T> implements IThenable<T> {
     return { value: x, finish: true };
   }
 }
-
-export { Guarantee };
