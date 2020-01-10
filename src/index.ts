@@ -29,6 +29,7 @@ export default class Guarantee<T> implements IThenable<T> {
 
   private thenable: Thenable;
   private gaurantees: Guarantee<T>[] = [];
+  private unpack: boolean = true;
 
   constructor(
     func: (
@@ -39,21 +40,22 @@ export default class Guarantee<T> implements IThenable<T> {
     if (!isFunction(func)) {
       throw new TypeError("Constructor value should be a function.");
     }
-    this.thenable = () =>
-      func(this.resolveInternal.bind(this), this.rejectInternal.bind(this));
+    this.thenable = () => {
+      try {
+        func(this.resolve.bind(this), this.reject.bind(this));
+      } catch (error) {
+        this.rejectWithoutUnpacking(error);
+      }
+    };
   }
 
-  public resolve = (value: T | any) => {
-    this.resolveInternal(value, false);
-  };
-
-  private resolveInternal(value: any, unpack: boolean = false) {
+  public resolve(value: any) {
     if (!this.pending) {
       return this.value;
     }
 
     let res;
-    if (!unpack) {
+    if (this.unpack) {
       res = this.promiseResolution(value);
       if (!res.finish) {
         return;
@@ -76,17 +78,13 @@ export default class Guarantee<T> implements IThenable<T> {
     return this;
   }
 
-  public reject = (reason: any) => {
-    this.rejectInternal(reason, false);
-  };
-
-  private rejectInternal(reason: any, unpack: boolean = false) {
+  public reject(reason: any) {
     if (!this.pending) {
       return;
     }
 
     let res;
-    if (!unpack) {
+    if (this.unpack) {
       res = this.promiseResolution(reason);
       if (!res.finish) {
         return;
@@ -109,40 +107,29 @@ export default class Guarantee<T> implements IThenable<T> {
     return this;
   }
 
+  private rejectWithoutUnpacking(reason: any) {
+    this.unpack = false;
+    this.reject(reason);
+  }
+
   then(
     onFulfilled?: (value: T) => T,
     onRejected?: (reason: any) => any
   ): Guarantee<T> {
     const guarantee = new Guarantee<T>((resolve, reject) => {
-      const resolveWrapper = (value: any) => {
-        try {
-          resolve(onFulfilled && onFulfilled(value));
-        } catch (e) {
-          reject(e, true);
-        }
-      };
-
-      const rejectWrapper = (reason: any) => {
-        try {
-          reject(onRejected && onRejected(reason));
-        } catch (e) {
-          resolve(e, true);
-        }
-      };
-
       if (this.status === Status.Fulfilled) {
-        if (isFunction(onFulfilled)) {
-          resolveWrapper(this.value);
-        } else if (isFunction(onRejected)) {
-          rejectWrapper(this.value);
+        if (onFulfilled && isFunction(onFulfilled)) {
+          resolve(onFulfilled(this.value));
+        } else if (onRejected && isFunction(onRejected)) {
+          reject(onRejected(this.value));
         } else {
           resolve(this.value);
         }
       } else if (this.status === Status.Rejected) {
-        if (isFunction(onRejected)) {
-          rejectWrapper(this.reason);
-        } else if (isFunction(onFulfilled)) {
-          resolveWrapper(this.reason);
+        if (onRejected && isFunction(onRejected)) {
+          reject(onRejected(this.reason));
+        } else if (onFulfilled && isFunction(onFulfilled)) {
+          resolve(onFulfilled(this.reason));
         } else {
           reject(this.reason);
         }
@@ -186,7 +173,7 @@ export default class Guarantee<T> implements IThenable<T> {
         // 2.3.3.1. Let then be x.then.
         then = x.then;
       } catch (e) {
-        this.rejectInternal(e, true);
+        this.rejectWithoutUnpacking(e);
         return { finish: false };
       }
 
@@ -205,7 +192,7 @@ export default class Guarantee<T> implements IThenable<T> {
         const rejectPromise = (reason: any) => {
           if (!called) {
             called = true;
-            this.rejectInternal(reason, true);
+            this.rejectWithoutUnpacking(reason);
           }
         };
 
@@ -214,7 +201,7 @@ export default class Guarantee<T> implements IThenable<T> {
           then.call(x, resolvePromise, rejectPromise);
         } catch (e) {
           if (!called) {
-            this.rejectInternal(e, true);
+            this.rejectWithoutUnpacking(e);
           }
         }
 
